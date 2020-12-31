@@ -2,17 +2,29 @@
 #include "isp.h"
 #include "pins.h"
 
-void ISPClass::enterProgramMode() {
+bool ISPClass::enterProgramMode() {
+  pinMode(RESET_PIN, OUTPUT);     // Be sure to reset SoC so pins are tristate
+  digitalWrite(RESET_PIN, LOW);
+
   SPI.begin();
-  SPI.setDataMode(SPI_MODE1);
+  SPI.setDataMode(SPI_MODE0);
   SPI.setClockDivider(SPI_CLOCK_DIV128);
 
-  digitalWrite(RESET_PIN, HIGH);
-  pinMode(RESET_PIN, OUTPUT);
-  delayMicroseconds(50);
-  digitalWrite(RESET_PIN, LOW);
-  delay(20);
-  rawCommand(0xAC, 0x53, 0x00, 0x00);
+  for (uint8_t ri = 0; ri < 5; ++ri) {
+    digitalWrite(RESET_PIN, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(RESET_PIN, LOW);
+    delay(20);
+
+    SPI.transfer(0xAC);
+    SPI.transfer(0x53);
+    uint8_t echo = SPI.transfer(0x00);
+    SPI.transfer(0x00);
+    if (echo == 0x53)
+      return false;
+  }
+
+  return true;
 }
 
 void ISPClass::exitProgramMode() {
@@ -34,18 +46,20 @@ void ISPClass::writeFlash(uint16_t address, uint16_t data) {
   rawCommand(0x48, address >> 8, address, data >> 8);
 }
 
-void ISPClass::commitFlash(uint16_t page) {
+bool ISPClass::commitFlash(uint16_t page) {
   rawCommand(0x4C, page >> 8, page, 0x00);
-  waitIdle();
+
+  return waitIdle();
 }
 
 void ISPClass::writeEEprom(uint16_t address, uint8_t data) {
   rawCommand(0xC1, address >> 8, address, data);
 }
 
-void ISPClass::commitEEprom(uint16_t page) {
+bool ISPClass::commitEEprom(uint16_t page) {
   rawCommand(0xC2, page >> 8, page, 0x00);
-  waitIdle();
+
+  return waitIdle();
 }
 
 uint16_t ISPClass::readFlash(uint16_t address) {
@@ -69,7 +83,12 @@ uint32_t ISPClass::readSignature() {
 
 ISPClass ISP;
 
-void ISPClass::waitIdle(void){
-  while (rawCommand(0xF0, 0x00, 0x00, 0x00) & 1)
-    ;
+bool ISPClass::waitIdle(void){
+  uint32_t startTime = millis();
+  while (rawCommand(0xF0, 0x00, 0x00, 0x00) & 1) {
+    if (millis() - startTime >= 100)
+      return true;    // Error:timeout
+  }
+
+  return false;
 }

@@ -4,18 +4,22 @@
 
 void setup() {
   wdt_enable(WDTO_1S);
+
   pinMode(PROGRAMMINGLED_PIN, OUTPUT);
+  digitalWrite(PROGRAMMINGLED_PIN, HIGH);
+  pinMode(PROGRAMMINGERR_PIN, OUTPUT);
+  digitalWrite(PROGRAMMINGERR_PIN, HIGH);
+
   Serial.begin(115200);
 }
 
 void loop() {
-  static bool programLedSts;
-
   wdt_reset();
-  digitalWrite(PROGRAMMINGLED_PIN, programLedSts ? LOW : HIGH);
 
   if (Serial.available()) {
-    programLedSts = STK500V1.isProgramMode();
     STK500V1.process(Serial.read());
+
+    digitalWrite(PROGRAMMINGLED_PIN, STK500V1.isProgramMode() ? LOW : HIGH);
+    digitalWrite(PROGRAMMINGERR_PIN, STK500V1.isProgrammingError() ? LOW : HIGH);
     }
 }

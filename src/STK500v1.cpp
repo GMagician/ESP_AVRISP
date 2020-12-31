@@ -29,13 +29,13 @@ void STK500V1Class::process(char cmd) {
       break;
 
     case Cmnd_STK_SET_DEVICE_EXT:
-      serialReadBytes(5);   // Not used
+      setExtendedParameters();
       emptyReply();
       break;
 
     case Cmnd_STK_ENTER_PROGMODE:
       if (!programMode)
-        ISP.enterProgramMode();
+        programmingError = ISP.enterProgramMode();
       programMode = true;
       emptyReply();
       break;
@@ -82,6 +82,10 @@ void STK500V1Class::process(char cmd) {
 
 bool STK500V1Class::isProgramMode() {
   return programMode;
+}
+
+bool STK500V1Class::isProgrammingError() {
+  return programmingError;
 }
 
 uint8_t STK500V1Class::serialRead() {
@@ -175,9 +179,15 @@ void STK500V1Class::setParameters() {
   param.eepromSize = (param.eepromSize >> 8) | (param.eepromSize << 8);
   // 32 bits
   param.flashSize = (param.flashSize >> 24) |
-                    ((param.flashSize & 0x00FF0000) >> 16) |
+                    ((param.flashSize & 0x00FF0000) >> 8) |
                     ((param.flashSize & 0x0000FF00) << 8) |
                     (param.flashSize << 24);
+}
+
+void STK500V1Class::setExtendedParameters() {
+  uint8_t * extParamPtr = (uint8_t *)&extParam;
+  for (uint8_t i = 0; i < sizeof(extParam); ++i, ++extParamPtr)
+    *extParamPtr = serialRead();
 }
 
 void STK500V1Class::universal() {
@@ -186,7 +196,7 @@ void STK500V1Class::universal() {
 }
 
 uint16_t STK500V1Class::getFlashPage() {
-  switch (param.pageSize) {
+ switch (param.pageSize) {
     case 32:
     case 64:
     case 128:
@@ -198,7 +208,7 @@ uint16_t STK500V1Class::getFlashPage() {
 }
 
 uint16_t STK500V1Class::getEEpromPage() {
-  return curWordAddress & ~(param.pageSize - 1);
+  return (curWordAddress << 1) & ~((extParam.eepromPageSize >> 1) - 1);   // here is a word address, get the byte address
 }
 
 void STK500V1Class::programPage() {
@@ -210,11 +220,11 @@ void STK500V1Class::programPage() {
     uint8_t memType = serialRead();
     switch (memType) {
       case 'F':
-        writeFlash(length);
+        programmingError |= writeFlash(length);
         break;
 
       case 'E':
-        writeEEprom(length);
+        programmingError |= writeEEprom(length);
         break;
 
       default:
@@ -224,65 +234,75 @@ void STK500V1Class::programPage() {
   }
 }
 
-void STK500V1Class::writeFlash(uint16_t length) {
+bool STK500V1Class::writeFlash(uint16_t length) {
+  uint8_t result;
+
   uint8_t *buffer = serialReadBytes(length);
-  if (buffer == nullptr) {
-    serialWrite(Resp_STK_FAILED);
-    return;
-  }
-
-  if (serialRead() != Sync_CRC_EOP)
-    serialWrite(Resp_STK_NOSYNC);
-  else {
-    serialWrite(Resp_STK_INSYNC);
-
-    uint16_t prevPage = getFlashPage();
-    for (uint16_t i = 0; i < length; i += 2, ++curWordAddress) {
-      uint16_t curPage = getFlashPage();
-      if (curPage != prevPage) {
-        ISP.commitFlash(prevPage);
-        prevPage = curPage;
-      }
-      ISP.writeFlash(curWordAddress, (uint16_t(buffer[i+1]) << 8) | buffer[i]);
-    }
-    ISP.commitFlash(prevPage);
-
-    serialWrite(Resp_STK_OK);
-  }
-  free (buffer);
-}
-
-void STK500V1Class::writeEEprom(uint16_t length) {
-  uint8_t *buffer = serialReadBytes(length);
-  if (buffer == nullptr) {
-    serialWrite(Resp_STK_FAILED);
-    return;
-  }
-
-  if (length > param.eepromSize)
-    serialWrite(Resp_STK_FAILED);
+  if (buffer == nullptr)
+    result = Resp_STK_FAILED;
   else {
     if (serialRead() != Sync_CRC_EOP)
-      serialWrite(Resp_STK_NOSYNC);
+      result = Resp_STK_NOSYNC;
     else {
       serialWrite(Resp_STK_INSYNC);
 
-      uint32_t addr = curWordAddress << 1;    // here is a word address, get the byte address
-      uint16_t prevPage = getEEpromPage();
-      for (uint16_t i = 0; i < length; ++i, ++addr) {
-        uint16_t curPage = getEEpromPage();
+      result = Resp_STK_OK;
+      uint16_t prevPage = getFlashPage();
+      for (uint16_t i = 0; i < length; i += 2, ++curWordAddress) {
+        uint16_t curPage = getFlashPage();
         if (curPage != prevPage) {
-          ISP.commitEEprom(prevPage);
+          if (ISP.commitFlash(prevPage))
+            result = Resp_STK_FAILED;
           prevPage = curPage;
         }
-        ISP.writeEEprom(addr, buffer[i]);
+        ISP.writeFlash(curWordAddress, (uint16_t(buffer[i+1]) << 8) | buffer[i]);
       }
-      ISP.commitEEprom(prevPage);
-
-      serialWrite(Resp_STK_OK);
+      if (ISP.commitFlash(prevPage))
+        result = Resp_STK_FAILED;
     }
+    free (buffer);
   }
-  free (buffer);
+  serialWrite(result);
+
+  return result != Resp_STK_OK;
+}
+
+bool STK500V1Class::writeEEprom(uint16_t length) {
+  uint8_t result;
+
+  uint8_t *buffer = serialReadBytes(length);
+  if (buffer == nullptr)
+    result = Resp_STK_FAILED;
+  else {
+    if (length > param.eepromSize)
+      result = Resp_STK_FAILED;
+    else {
+      if (serialRead() != Sync_CRC_EOP)
+        result = Resp_STK_NOSYNC;
+      else {
+        serialWrite(Resp_STK_INSYNC);
+
+        result = Resp_STK_OK;
+        uint32_t addr = curWordAddress << 1;    // here is a word address, get the byte address
+        uint16_t prevPage = getEEpromPage();
+        for (uint16_t i = 0; i < length; ++i, ++addr) {
+          uint16_t curPage = getEEpromPage();
+          if (curPage != prevPage) {
+            if (ISP.commitEEprom(prevPage))
+              result = Resp_STK_FAILED;
+            prevPage = curPage;
+          }
+          ISP.writeEEprom(addr, buffer[i]);
+        }
+        if (ISP.commitEEprom(prevPage))
+          result = Resp_STK_FAILED;
+      }
+    }
+    free (buffer);
+  }
+  serialWrite(result);
+
+  return result != Resp_STK_OK;
 }
 
 void STK500V1Class::readPage() {
@@ -323,8 +343,7 @@ void STK500V1Class::readFlash(uint16_t length) {
 
 void STK500V1Class::readEEProm(uint16_t length) {
   serialWrite(Resp_STK_INSYNC);
-  // here again we have a word address
-  uint32_t addr = curWordAddress << 1;
+  uint32_t addr = curWordAddress << 1;  // here again we have a word address
   for (uint16_t i = 0; i < length; ++i, ++addr) {
     uint8_t b = ISP.readEEprom(addr);
     serialWrite(b);
