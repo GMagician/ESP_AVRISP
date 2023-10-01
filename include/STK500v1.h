@@ -4,19 +4,20 @@
 
 class STK500V1Class {
   public:
-    void process(char cmd);
-    bool isProgramMode(void);
-    bool isProgrammingError(void);
+    enum Status { Undefined, Programming, Error, Done } aaa;
+
+    void process(Stream* stream);
+    Status getStatus(void);
 
   private:
     #define HWVER   2
     #define SWMAJ   1
     #define SWMIN   18
 
-    bool programMode,
-         programmingError;
+    Stream* stream;
+    Status status;
     uint16_t curWordAddress;
-    struct Parameter {
+    struct DeviceParameter {
       uint8_t deviceCode;
       uint8_t revision;
       uint8_t progType;
@@ -31,25 +32,25 @@ class STK500V1Class {
       uint16_t pageSize;
       uint16_t eepromSize;
       uint32_t flashSize;
-    } param;
-    struct ExtendedParameter {
+    } devParam;
+    struct ExtendedDeviceParameter {
       uint8_t commandSize;
       uint8_t eepromPageSize;
       uint8_t signalPagel;
       uint8_t signalBS2;
       uint8_t resetDisable;
-    } extParam;
+    } extDevParam;
 
-    uint8_t serialRead(void);
-    uint8_t *serialReadBytes(uint16_t bytes);
-    void serialWrite(uint8_t c);
-    void serialWrite(const char *s);
+    uint8_t streamRead(void);
+    uint8_t *streamReadBytes(uint16_t bytes);
+    void socketWrite(uint8_t c);
+    void streamWrite(const char *s);
     void emptyReply(void);
     void byteReply(uint8_t b);
     void wordReply(uint16_t w);
-    void getVersion(void);
-    void setParameters(void);
-    void setExtendedParameters(void);
+    void getParameters(void);
+    void setDeviceParameters(void);
+    void setExtendedDeviceParameters(void);
     void universal(void);
     uint16_t getFlashPage(void);
     uint16_t getEEpromPage(void);
