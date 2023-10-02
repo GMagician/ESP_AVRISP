@@ -36,15 +36,15 @@ void STK500V1Class::process(Stream* stream) {
       break;
 
     case Cmnd_STK_ENTER_PROGMODE:
-      if (status != Status::Programming)
-        status = ISP.enterProgramMode() ? Status::Error : Status::Programming;
+      if (status != Status::ProgramMode)
+        status = ISP.enterProgramMode() ? Status::Error : Status::ProgramMode;
       emptyReply();
       break;
 
     case Cmnd_STK_LEAVE_PROGMODE:
-      ISP.exitProgramMode();
       if (status != Status::Error)
         status = Status::Done;
+      ISP.exitProgramMode();
       emptyReply();
       break;
 

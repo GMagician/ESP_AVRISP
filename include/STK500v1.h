@@ -4,7 +4,7 @@
 
 class STK500V1Class {
   public:
-    enum Status { Undefined, Programming, Error, Done } aaa;
+    enum Status { Idle, ProgramMode, Error, Done };
 
     void process(Stream* stream);
     Status getStatus(void);
@@ -16,6 +16,7 @@ class STK500V1Class {
 
     Stream* stream;
     Status status;
+    bool programMode;
     uint16_t curWordAddress;
     struct DeviceParameter {
       uint8_t deviceCode;
